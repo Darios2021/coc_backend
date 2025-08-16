@@ -7,6 +7,8 @@ const path = require('path');
 const multer = require('multer');
 const pdfParse = require('pdf-parse');
 const chokidar = require('chokidar');
+const { PutObjectCommand } = require("@aws-sdk/client-s3");
+const { s3 } = require("./s3");
 require('dotenv').config();
 
 // ===== app =====
@@ -210,6 +212,7 @@ app.get('/docs/:id/file', async (req, res) => {
 });
 
 // subir PDF
+// subir PDF (guarda en disco + ingesta + opcional sube a MinIO)
 app.post('/docs/upload', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Falta el archivo PDF' });
@@ -219,15 +222,38 @@ app.post('/docs/upload', upload.single('file'), async (req, res) => {
       doc_type: req.body.doc_type || 'otro',
       version: req.body.version || null
     };
-    const absPath = req.file.path;
 
+    const absPath = req.file.path; // ya está en uploads/ por tu multer.diskStorage
+    const relName = path.basename(absPath);
+
+    // 1) Ingesta como ya hacías
     const r = await ingestPdfAbs(absPath, meta);
+
+    // 2) (opcional) subir una copia a MinIO
+    if (String(process.env.MINIO_ENABLE).toLowerCase() === 'true') {
+      try {
+        const data = fs.readFileSync(absPath);
+        const key = `${Date.now()}_${relName}`;
+        await s3.send(new PutObjectCommand({
+          Bucket: process.env.MINIO_BUCKET,
+          Key: key,
+          Body: data,
+          ContentType: 'application/pdf',
+        }));
+        r.minio = { bucket: process.env.MINIO_BUCKET, key };
+      } catch (e) {
+        console.error('⚠️  Copia a MinIO falló:', e.message || e);
+        // no cortamos la respuesta; tu flujo a disco queda OK igual
+      }
+    }
+
     res.status(201).json(r);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: String(e.message || e) });
   }
 });
+
 
 // ===== búsqueda global =====
 // (si creás un índice FULLTEXT en sections(content,heading), cambiá el query por MATCH...AGAINST)
