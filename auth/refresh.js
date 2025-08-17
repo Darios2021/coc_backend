@@ -56,8 +56,17 @@ module.exports = async function refreshHandler(req, res) {
       [u.id, jti, crypto.createHash('sha256').update(refresh).digest('hex'), now, exp, ip, ua]
     )
 
-    res.cookie('coc_access',  access,  { ...cookieCommon, maxAge: (Number(process.env.ACCESS_TTL_MIN) || 15) * 60 * 1000 })
-    res.cookie('coc_refresh', refresh, { ...cookieCommon, maxAge: 7 * 864e5 })
+    res.cookie('coc_access', access, {
+  ...cookieCommon,
+  maxAge: (Number(process.env.ACCESS_TTL_MIN) || 15) * 60 * 1000,
+  path: '/'
+})
+
+res.cookie('coc_refresh', refresh, {
+  ...cookieCommon,
+  maxAge: 7 * 864e5,
+  path: '/'
+})
 
     await audit({ conn: pool, userId: u.id, action: 'REFRESH_ROTATED', entityId: u.id, meta: {} })
     return res.json({ ok: true })
