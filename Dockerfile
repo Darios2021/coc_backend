@@ -1,19 +1,20 @@
-FROM node:18
+FROM node:20-alpine
 
-# Crear directorio de la app
+# Seteamos TZ (opcional pero útil para logs)
+ENV TZ=America/Argentina/San_Juan
 WORKDIR /usr/src/app
 
-# Copiar package.json y package-lock.json
+# Dependencias
 COPY package*.json ./
+RUN npm ci --only=production
 
-# Instalar dependencias
-RUN npm install --production
-
-# Copiar el resto del código
+# Código
 COPY . .
 
-# Exponer el puerto (el que uses en tu server.js, ej: 3000)
-EXPOSE 3000
+# Usá el mismo puerto que en .env (CapRover mapea igual)
+EXPOSE 3001
 
-# Comando de inicio
-CMD ["npm", "start"]
+# Seguridad básica de Node
+ENV NODE_ENV=production
+
+CMD ["node", "server.js"]
