@@ -1,16 +1,14 @@
 // config/cookies.js
 const prod = process.env.NODE_ENV === 'production'
 
-/**
- * Opciones comunes para setear cookies HttpOnly en cross-site.
- * - sameSite: 'None' es obligatorio cuando el front y el back están en dominios distintos.
- * - secure: true requerido por los navegadores cuando sameSite === 'None'.
- * - path: '/' para que apliquen a todas las rutas del backend.
- */
 module.exports = {
   httpOnly: true,
-  secure: prod,          // en CapRover es https, así que true
-  sameSite: prod ? 'None' : 'Lax',
+  secure: prod,                   // en prod SIEMPRE true (ya lo tenés)
+  sameSite: prod ? 'None' : 'Lax',// en prod SIEMPRE 'None' (ya lo tenés)
   path: '/',
-  // domain: opcional. No lo seteamos; por defecto queda en el host del backend.
+  // ⬇️ agregá UNO de estos (elegí):
+  // 1) si backend está en coc-backend.cingulado.org:
+  domain: 'coc-backend.cingulado.org',
+  // 2) o si vas a unificar bajo el mismo dominio que el front:
+  // domain: '.md-seguridad.com',
 }
