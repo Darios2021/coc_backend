@@ -1,37 +1,55 @@
-// auth/login.js
-const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
-const db = require('../db');
+app.post('/auth/login', loginLimiter, async (req, res) => {
+  const { email='', password='', totp=null, remember=false } = req.body
+  const ip = req.headers['x-forwarded-for']?.toString().split(',')[0] || req.socket.remoteAddress
+  const ua = req.headers['user-agent']
 
-module.exports = async (req, res) => {
-  const { email, password } = req.body;
+  const [rows] = await pool.execute('SELECT * FROM users WHERE email = ? AND is_active = 1', [email.toLowerCase().trim()])
+  const u = rows[0]
 
-  // Validación básica
-  if (!email || !password) {
-    return res.status(400).json({ error: 'Faltan datos' });
+  if (!u) {
+    await audit({ conn: pool, action:'LOGIN_FAILED', meta:{ email, ip, ua, reason:'INVALID_USER' } })
+    return res.status(401).json({ message:'Credenciales inválidas' })
   }
 
-  try {
-    const [[user]] = await db.query('SELECT * FROM users WHERE email = ? LIMIT 1', [email]);
-
-    if (!user) {
-      return res.status(401).json({ error: 'Credenciales inválidas' });
-    }
-
-    const passwordOk = await bcrypt.compare(password, user.password_hash);
-    if (!passwordOk) {
-      return res.status(401).json({ error: 'Credenciales inválidas' });
-    }
-
-    const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: '8h' }
-    );
-
-    res.json({ token, user: { id: user.id, email: user.email, role: user.role } });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Error al autenticar' });
+  if (u.locked_until && new Date(u.locked_until) > new Date()) {
+    await audit({ conn: pool, userId:u.id, action:'LOGIN_LOCKED', entityId:u.id, meta:{ email, ip, ua } })
+    return res.status(401).json({ message:'Cuenta bloqueada temporalmente' })
   }
-};
+
+  const ok = await bcrypt.compare(password, u.password_hash)
+  if (!ok) {
+    const failed = (u.failed_count||0) + 1
+    const lock = failed >= 5 ? new Date(Date.now() + 5*60*1000) : null
+    await pool.execute('UPDATE users SET failed_count=?, locked_until=? WHERE id=?', [failed, lock, u.id])
+    await audit({ conn: pool, userId:u.id, action:'LOGIN_FAILED', entityId:u.id, meta:{ email, ip, ua, reason:'INVALID_PASSWORD', failed } })
+    return res.status(401).json({ message:'Credenciales inválidas' })
+  }
+
+  // (Opcional) si usás 2FA:
+  if (u.totp_enabled) {
+    if (!totp) {
+      await audit({ conn: pool, userId:u.id, action:'TOTP_REQUIRED', entityId:u.id, meta:{ email, ip, ua } })
+      return res.status(401).json({ reason:'TOTP_REQUIRED', message:'Se requiere 2FA' })
+    }
+    // TODO validar totp con speakeasy y tu u.totp_secret (cifrado)
+  }
+
+  await pool.execute('UPDATE users SET failed_count=0, locked_until=NULL, last_login_at=NOW() WHERE id=?', [u.id])
+
+  const jti = uuidv4()
+  const access = jwt.sign({ sub:u.id, email:u.email, role_id:u.role_id }, process.env.JWT_SECRET, { expiresIn: `${process.env.ACCESS_TTL_MIN||15}m` })
+  const refresh = jwt.sign({ sub:u.id, jti }, process.env.REFRESH_SECRET, { expiresIn: `${process.env.REFRESH_TTL_DAYS||7}d` })
+
+  const now = new Date()
+  const exp = new Date(now.getTime() + (process.env.REFRESH_TTL_DAYS||7) * 864e5)
+  await pool.execute(
+    'INSERT INTO refresh_tokens (user_id,jti,token_hash,issued_at,expires_at,ip,user_agent) VALUES (?,?,?,?,?,?,?)',
+    [u.id, jti, crypto.createHash('sha256').update(refresh).digest('hex'), now, exp, ip, ua]
+  )
+
+  res.cookie('coc_access', access, { ...cookieCommon, maxAge: (process.env.ACCESS_TTL_MIN||15) * 60 * 1000 })
+  res.cookie('coc_refresh', refresh, { ...cookieCommon, maxAge: (remember?7:1) * 864e5 })
+
+  await audit({ conn: pool, userId:u.id, action:'LOGIN_SUCCESS', entityId:u.id, meta:{ ip, ua } })
+  return res.json({ ok:true })
+})

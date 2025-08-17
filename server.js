@@ -7,14 +7,45 @@ const path = require('path');
 const multer = require('multer');
 const pdfParse = require('pdf-parse');
 const chokidar = require('chokidar');
+const cookieParser = require('cookie-parser');
 const { PutObjectCommand } = require("@aws-sdk/client-s3");
 const { s3 } = require("./s3");
 require('dotenv').config();
 
 // ===== app =====
 const app = express();
-app.use(cors());
+
+// === ✅ CORS configurado explícitamente ===
+const allowedOrigins = [
+  'https://coc.md-seguridad.com',
+  'http://localhost:5173'
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true
+}));
+
+app.use(cookieParser());
 app.use(express.json());
+
+// === rutas de autenticación ===
+const authRoutes = require('./routes/auth');
+app.use('/auth', authRoutes);
+
+// ==== lo demás queda igual ====
+
+
+const cookieParser = require('cookie-parser')
+app.use(cookieParser())
+
+
+
 
 // ===== db =====
 const pool = mysql.createPool({
