@@ -11,6 +11,15 @@ const { getSignedUrl } = require('@aws-sdk/s3-request-presigner')
 const { s3 } = require('./s3')
 require('dotenv').config()
 
+// ===== validación de .env =====
+const requiredEnv = ['MINIO_BUCKET', 'PORT']
+for (const v of requiredEnv) {
+  if (!process.env[v]) {
+    console.error(`❌ Faltante: ${v} en .env`)
+    process.exit(1)
+  }
+}
+
 // ===== app =====
 const app = express()
 app.set('trust proxy', 1)
@@ -20,6 +29,7 @@ const frontCsv = (process.env.FRONT_ORIGIN || '').split(',').map(s => s.trim()).
 app.use(cors({
   origin(origin, cb) {
     if (!origin || frontCsv.includes(origin)) return cb(null, true)
+    console.warn(`❌ CORS bloqueado: ${origin}`)
     return cb(new Error('Not allowed by CORS'))
   },
   credentials: true,
@@ -37,7 +47,7 @@ app.use('/auth', authRoutes)
 // ===== db =====
 const db = require('./db')
 
-// ===== helpers texto PDF =====
+// ===== helpers PDF =====
 function normalizeText(s) {
   return (s || '')
     .replace(/-\s*\n/g, '')
@@ -98,6 +108,7 @@ function splitIntoSectionsFromPages(pages) {
       page_no: 1
     })
   }
+
   return sections
 }
 
@@ -114,14 +125,13 @@ function safeName(original) {
   return (original || 'archivo.pdf').replace(/\s+/g, '_').replace(/[^\w.\-]/g, '')
 }
 
-// ===== Ingesta MINIO-ONLY =====
+// ===== Ingesta PDF a MinIO =====
 async function ingestPdfBufferToMinio(buffer, origName, meta = {}) {
   const title = meta.title || origName.replace(/\.pdf$/i, '')
   const docType = meta.doc_type || 'otro'
   const version = meta.version || null
   const key = `${Date.now()}_${safeName(origName)}`
 
-  // 1) Upload a MinIO
   await s3.send(new PutObjectCommand({
     Bucket: process.env.MINIO_BUCKET,
     Key: key,
@@ -129,14 +139,12 @@ async function ingestPdfBufferToMinio(buffer, origName, meta = {}) {
     ContentType: 'application/pdf'
   }))
 
-  // 2) Crear documento con clave de MinIO
   const [ins] = await db.query(
     'INSERT INTO documents (title, doc_type, version, source_minio_key, source_file, created_by) VALUES (?,?,?,?,NULL,NULL)',
     [title, docType, version, key]
   )
   const documentId = ins.insertId
 
-  // 3) Parsear y crear secciones
   const pages = await extractTextByPageFromBuffer(buffer)
   const secs = splitIntoSectionsFromPages(pages)
   let order = 0
@@ -150,7 +158,7 @@ async function ingestPdfBufferToMinio(buffer, origName, meta = {}) {
   return { id: documentId, title, doc_type: docType, sections_created: secs.length, source_minio_key: key }
 }
 
-// ===== multer (memoria) =====
+// ===== multer (PDFs) =====
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: (process.env.FILE_MAX_MB ? Number(process.env.FILE_MAX_MB) : 50) * 1024 * 1024 },
@@ -163,7 +171,6 @@ const upload = multer({
 // ===== routes =====
 app.get('/health', (_req, res) => res.json({ ok: true }))
 
-// listado básico
 app.get('/docs', async (_req, res) => {
   try {
     const [rows] = await db.query(
@@ -175,7 +182,6 @@ app.get('/docs', async (_req, res) => {
   }
 })
 
-// detalle + secciones
 app.get('/docs/:id', async (req, res) => {
   const id = Number(req.params.id)
   try {
@@ -184,6 +190,7 @@ app.get('/docs/:id', async (req, res) => {
       [id]
     )
     if (!doc) return res.status(404).json({ error: 'No encontrado' })
+
     const [secs] = await db.query(
       'SELECT id, section_path, heading, content, order_index, page_no FROM sections WHERE document_id = ? ORDER BY order_index ASC',
       [id]
@@ -194,7 +201,6 @@ app.get('/docs/:id', async (req, res) => {
   }
 })
 
-// servir PDF -> presigned URL de MinIO (fallback a disco si fuera legado)
 app.get('/docs/:id/file', async (req, res) => {
   const id = Number(req.params.id)
   try {
@@ -213,7 +219,6 @@ app.get('/docs/:id/file', async (req, res) => {
       return res.json({ url })
     }
 
-    // Compatibilidad con viejos en disco
     if (doc.source_file) {
       const absPath = path.join(__dirname, doc.source_file)
       if (!fs.existsSync(absPath)) return res.status(404).json({ error: 'PDF no existe en disco' })
@@ -230,7 +235,6 @@ app.get('/docs/:id/file', async (req, res) => {
   }
 })
 
-// subir PDF -> MINIO ONLY + ingesta
 app.post('/docs/upload', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Falta el archivo PDF' })
@@ -249,7 +253,6 @@ app.post('/docs/upload', upload.single('file'), async (req, res) => {
   }
 })
 
-// búsqueda global
 app.get('/search', async (req, res) => {
   const q = (req.query.q || '').trim()
   if (!q) return res.json({ q, results: [] })
@@ -270,36 +273,6 @@ app.get('/search', async (req, res) => {
   }
 })
 
-// (opcional) migrar legados del disco -> MinIO y limpiar
-app.post('/docs/migrate-local-to-minio', async (_req, res) => {
-  try {
-    const [docs] = await db.query('SELECT id, source_file FROM documents WHERE source_file IS NOT NULL')
-    let migrated = 0, missing = 0
-
-    for (const d of docs) {
-      const abs = d.source_file ? path.join(__dirname, d.source_file) : null
-      if (!abs || !fs.existsSync(abs)) { missing++; continue }
-
-      const data = fs.readFileSync(abs)
-      const key = `legacy_${Date.now()}_${safeName(path.basename(abs))}`
-      await s3.send(new PutObjectCommand({
-        Bucket: process.env.MINIO_BUCKET,
-        Key: key,
-        Body: data,
-        ContentType: 'application/pdf'
-      }))
-      await db.query('UPDATE documents SET source_minio_key = ?, source_file = NULL WHERE id = ?', [key, d.id])
-      try { fs.unlinkSync(abs) } catch {}
-      migrated++
-    }
-    res.json({ ok: true, migrated, missing })
-  } catch (e) {
-    console.error(e)
-    res.status(500).json({ error: String(e.message || e) })
-  }
-})
-
-// eliminar doc (borra objeto en MinIO si aplica)
 app.delete('/docs/:id', async (req, res) => {
   const id = Number(req.params.id)
   try {
@@ -323,6 +296,12 @@ app.delete('/docs/:id', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: String(e.message || e) })
   }
+})
+
+// ===== middleware de errores global =====
+app.use((err, req, res, _next) => {
+  console.error('💥 Error global:', err.stack)
+  res.status(500).json({ error: 'Error interno del servidor' })
 })
 
 // ===== start =====
