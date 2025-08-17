@@ -15,7 +15,7 @@ require('dotenv').config();
 // ===== app =====
 const app = express();
 
-// === ✅ CORS configurado explícitamente ===
+// === CORS configurado explícitamente ===
 const allowedOrigins = [
   'https://coc.md-seguridad.com',
   'http://localhost:5173'
@@ -34,7 +34,6 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
-
 app.use(cookieParser());
 app.use(express.json());
 
@@ -42,11 +41,9 @@ app.use(express.json());
 const authRoutes = require('./routes/auth');
 app.use('/auth', authRoutes);
 
-// ==== lo demás queda igual ====
+// === tu código continúa sin cambios desde acá ===
+// 👇👇👇
 
-
-const cookieParser = require('cookie-parser')
-app.use(cookieParser())
 
 
 
