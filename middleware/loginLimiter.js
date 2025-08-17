@@ -2,13 +2,9 @@
 const rateLimit = require('express-rate-limit')
 
 const loginLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minuto
-  max: 5, // Máximo de 5 intentos por IP
-  message: {
-    message: 'Demasiados intentos de login desde esta IP, por favor espere un minuto'
-  },
-  standardHeaders: true,
-  legacyHeaders: false
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 10,
+  message: 'Demasiados intentos, intentá más tarde'
 })
 
 module.exports = loginLimiter
