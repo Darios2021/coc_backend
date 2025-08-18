@@ -79,17 +79,19 @@ module.exports = async function login(req, res) {
   )
 
   // 7) setear cookies seguras cross-site
-res.cookie('coc_access', access, {
-  ...cookieCommon,
-  maxAge: (Number(process.env.ACCESS_TTL_MIN) || 15) * 60 * 1000,
-  path: '/',
-})
+  res.cookie('coc_access', access, {
+    ...cookieCommon,
+    maxAge: (Number(process.env.ACCESS_TTL_MIN) || 15) * 60 * 1000,
+    path: '/',
+    domain: process.env.COOKIE_DOMAIN || '.md-seguridad.com',
+  })
 
-res.cookie('coc_refresh', refresh, {
-  ...cookieCommon,
-  maxAge: 7 * 864e5,
-  path: '/',
-})
+  res.cookie('coc_refresh', refresh, {
+    ...cookieCommon,
+    maxAge: 7 * 864e5,
+    path: '/',
+    domain: process.env.COOKIE_DOMAIN || '.md-seguridad.com',
+  })
 
   await audit({ conn: pool, userId: u.id, action: 'LOGIN_SUCCESS', entityId: u.id, meta: { ip, ua } })
   return res.json({ ok: true })
