@@ -1,14 +1,14 @@
-// config/cookies.js
+// coc_backend/config/cookies.js
 const prod = process.env.NODE_ENV === 'production'
+const domain = prod ? (process.env.COOKIE_DOMAIN || undefined) : undefined
+// Ejemplos de COOKIE_DOMAIN en .env (solo prod):
+// COOKIE_DOMAIN=coc-backend.cingulado.org
+// o si unificás front+back bajo el mismo dominio: COOKIE_DOMAIN=.md-seguridad.com
 
 module.exports = {
   httpOnly: true,
-  secure: prod,                   // en prod SIEMPRE true (ya lo tenés)
-  sameSite: prod ? 'None' : 'Lax',// en prod SIEMPRE 'None' (ya lo tenés)
+  secure: true,            // Requerido cuando sameSite === 'None'
+  sameSite: 'None',        // Necesario para que viajen en cross-site (front ↔ back)
   path: '/',
-  // ⬇️ agregá UNO de estos (elegí):
-  // 1) si backend está en coc-backend.cingulado.org:
-  domain: 'coc-backend.cingulado.org',
-  // 2) o si vas a unificar bajo el mismo dominio que el front:
-  // domain: '.md-seguridad.com',
+  ...(domain ? { domain } : {})  // Solo aplica en prod si seteaste COOKIE_DOMAIN
 }
