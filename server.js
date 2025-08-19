@@ -29,34 +29,40 @@ const app = express()
 app.set('trust proxy', 1)
 
 // ===== CORS (multi-origen desde FRONT_ORIGIN CSV) =====
-// FRONT_ORIGIN="https://app1.com,https://app2.com"
+// FRONT_ORIGIN="https://coc.md-seguridad.com,https://otro.dominio"
 const frontCsv = (process.env.FRONT_ORIGIN || '')
   .split(',')
   .map(s => s.trim())
   .filter(Boolean)
 
-app.use(cors({
+const corsConfig = {
   origin(origin, cb) {
-    // Permite herramientas como curl/postman (sin origin) y los orígenes listados
+    // Permite curl/postman (sin Origin) y los orígenes listados
     if (!origin || frontCsv.includes(origin)) return cb(null, true)
     console.warn(`❌ CORS bloqueado: ${origin}`)
     return cb(new Error('Not allowed by CORS'))
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}))
+  // IMPORTANTE: incluir X-Role si el front la envía
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Role'],
+  exposedHeaders: ['Content-Disposition']
+}
+app.use(cors(corsConfig))
+// Manejo explícito de preflight para todos los paths
+app.options('*', cors(corsConfig))
 
+// ===== middlewares comunes =====
 app.use(cookieParser())
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true }))
 
-// === rutas de autenticación (deberías tener ./routes/auth) ===
+// === rutas de autenticación (opcional) ===
 try {
   const authRoutes = require('./routes/auth')
   app.use('/auth', authRoutes)
 } catch {
-  console.warn('ℹ️ /auth no montado (no existe ./routes/auth). Continuo sin auth…')
+  console.warn('ℹ️ /auth no montado (no existe ./routes/auth). Continúo sin auth…')
 }
 
 // === rutas de uploads (MinIO directo) opcional ===
@@ -138,7 +144,7 @@ function splitIntoSectionsFromPages(pages) {
 }
 
 async function extractTextByPageFromBuffer(buffer) {
-  // pdf-parse no expone páginas por defecto; esto retorna todo como una sola "página lógica"
+  // pdf-parse no expone páginas por defecto; devolvemos todo como “una página”
   const options = {
     pagerender: (pageData) =>
       pageData.getTextContent().then(tc => tc.items.map(i => i.str).join(' '))
@@ -242,7 +248,6 @@ app.get('/docs/:id', async (req, res) => {
 
 /**
  * Devuelve { url } (presignada de MinIO) o sirve archivo local si existiera.
- * El front puede usarla para embebido con PDF.js.
  */
 app.get('/docs/:id/file', async (req, res) => {
   const id = Number(req.params.id)
@@ -301,8 +306,7 @@ app.post('/docs/upload', upload.single('file'), async (req, res) => {
 })
 
 /**
- * Búsqueda simple por LIKE sobre sections (contenido + heading)
- * /search?q=texto
+ * Búsqueda simple por LIKE sobre sections (contenido + heading) -> /search?q=texto
  */
 app.get('/search', async (req, res) => {
   const q = (req.query.q || '').trim()
