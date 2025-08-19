@@ -44,23 +44,12 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+  allowedHeaders: ['Content-Type', 'Authorization']
 }))
 
-// Manejo explícito de preflight (OPTIONS) para que no corte las requests
-app.options('*', cors({
-  origin: (origin, cb) => {
-    if (!origin || frontCsv.includes(origin)) return cb(null, true)
-    return cb(new Error('Not allowed by CORS'))
-  },
-  credentials: true
-}))
-
-// ===== middlewares comunes =====
 app.use(cookieParser())
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true }))
-
 
 // === rutas de autenticación (deberías tener ./routes/auth) ===
 try {
