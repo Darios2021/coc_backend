@@ -37,20 +37,19 @@ const frontCsv = (process.env.FRONT_ORIGIN || '')
 
 const corsConfig = {
   origin(origin, cb) {
-    // Permite curl/postman (sin Origin) y los orígenes listados
     if (!origin || frontCsv.includes(origin)) return cb(null, true)
     console.warn(`❌ CORS bloqueado: ${origin}`)
     return cb(new Error('Not allowed by CORS'))
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  // IMPORTANTE: incluir X-Role si el front la envía
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Role'],
-  exposedHeaders: ['Content-Disposition']
+  exposedHeaders: ['Content-Disposition'],
+  optionsSuccessStatus: 204,     // <- algunos navegadores viejos con 200 se quejan
 }
 app.use(cors(corsConfig))
-// Manejo explícito de preflight para todos los paths
 app.options('*', cors(corsConfig))
+
 
 // ===== middlewares comunes =====
 app.use(cookieParser())
