@@ -74,9 +74,10 @@ const corsConfig = {
   exposedHeaders: ['Content-Disposition'],
   optionsSuccessStatus: 204,     // <- algunos navegadores viejos con 200 se quejan
 }
+// CORS
 app.use(cors(corsConfig))
-app.options('*', cors(corsConfig))
-
+app.options('/', cors(corsConfig))
+app.options('/*', cors(corsConfig))
 
 // ===== middlewares comunes =====
 app.use(cookieParser())
