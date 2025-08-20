@@ -76,8 +76,6 @@ const corsConfig = {
 }
 // CORS
 app.use(cors(corsConfig))
-app.options('/', cors(corsConfig))
-app.options('/*', cors(corsConfig))
 
 // ===== middlewares comunes =====
 app.use(cookieParser())
