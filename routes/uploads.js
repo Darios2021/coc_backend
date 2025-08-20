@@ -18,7 +18,7 @@ const router = express.Router()
 const BUCKET = process.env.MINIO_BUCKET
 const DISK_UPLOAD_DIR = path.join(__dirname, '..', 'uploads')
 
-// Asegurá carpeta local (por si la usás en otros flujos)
+// Asegurá carpeta local
 if (!fs.existsSync(DISK_UPLOAD_DIR)) fs.mkdirSync(DISK_UPLOAD_DIR, { recursive: true })
 
 // Subidas directas a MinIO (memoria)
@@ -38,7 +38,7 @@ function safeName(original) {
 
 // ---------- Rutas ----------
 
-// POST /uploads  -> Sube PDF directo a MinIO (campo form-data: file)
+// POST /uploads -> Sube PDF directo a MinIO (campo form-data: file)
 router.post('/', uploadMem.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Falta archivo' })
@@ -65,9 +65,7 @@ router.post('/', uploadMem.single('file'), async (req, res) => {
   }
 })
 
-// POST /uploads/mirror-local
-// Sube TODOS los PDFs que ya existen en /uploads (disco) hacia MinIO.
-// Útil para “regularizar” lo que subiste directo al server.
+// POST /uploads/mirror-local -> sube todos los PDFs de /uploads a MinIO
 router.post('/mirror-local', async (_req, res) => {
   try {
     const files = fs.readdirSync(DISK_UPLOAD_DIR)
@@ -98,7 +96,9 @@ router.get('/files', async (_req, res) => {
   try {
     const data = await s3.send(new ListObjectsV2Command({ Bucket: BUCKET }))
     const items = (data.Contents || []).map(o => ({
-      key: o.Key, size: o.Size, lastModified: o.LastModified,
+      key: o.Key,
+      size: o.Size,
+      lastModified: o.LastModified,
     }))
     res.json(items)
   } catch (err) {
@@ -107,7 +107,7 @@ router.get('/files', async (_req, res) => {
   }
 })
 
-// GET /uploads/:key -> presigned URL (10 min)
+// GET /uploads/:key -> genera presigned URL (10 min)
 router.get('/:key', async (req, res) => {
   try {
     const key = req.params.key
