@@ -12,17 +12,44 @@ const {
   DeleteObjectCommand
 } = require('@aws-sdk/client-s3')
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner')
-const { s3 } = require('./s3')
 require('dotenv').config()
 
+// ==== MinIO: carga perezosa y a prueba de fallos ====
+const hasMinioEnv = Boolean(
+  process.env.MINIO_BUCKET &&
+  process.env.MINIO_ENDPOINT &&
+  process.env.MINIO_ACCESS_KEY &&
+  process.env.MINIO_SECRET_KEY
+)
+
+let s3Client = null
+function getS3Safe() {
+  if (!hasMinioEnv) return null
+  if (s3Client) return s3Client
+  try {
+    const { s3 } = require('./s3')    // se carga sólo si hace falta
+    s3Client = s3
+    return s3Client
+  } catch (e) {
+    console.error('⚠️ No pude inicializar S3/MinIO:', e.message || e)
+    return null
+  }
+}
+
+
 // ===== validación de .env =====
-const requiredEnv = ['MINIO_BUCKET', 'PORT']
+// ===== validación de .env =====
+const requiredEnv = ['PORT']   // <- NO exigir MinIO para arrancar
 for (const v of requiredEnv) {
   if (!process.env[v]) {
     console.error(`❌ Faltante: ${v} en .env`)
     process.exit(1)
   }
 }
+if (!hasMinioEnv) {
+  console.warn('⚠️ MinIO deshabilitado: faltan variables (MINIO_*)')
+}
+
 
 // ===== app =====
 const app = express()
@@ -159,19 +186,29 @@ function safeName(original) {
 }
 
 // ===== Ingesta PDF a MinIO =====
+// ===== Ingesta PDF a MinIO =====
 async function ingestPdfBufferToMinio(buffer, origName, meta = {}) {
-  const title = meta.title || origName.replace(/\.pdf$/i, '')
+  const title   = meta.title   || origName.replace(/\.pdf$/i, '')
   const docType = meta.doc_type || 'otro'
   const version = meta.version || null
-  const key = `${Date.now()}_${safeName(origName)}`
+  const key     = `${Date.now()}_${safeName(origName)}`
 
-  // Sube a MinIO
-  await s3.send(new PutObjectCommand({
-    Bucket: process.env.MINIO_BUCKET,
-    Key: key,
-    Body: buffer,
-    ContentType: 'application/pdf'
-  }))
+  // Sube a MinIO (a prueba de fallos)
+  const s3safe = getS3Safe()             // <- usa la función perezosa
+  if (!s3safe) {
+    throw new Error('MinIO no disponible para ingestión')
+  }
+  try {
+    await s3safe.send(new PutObjectCommand({
+      Bucket: process.env.MINIO_BUCKET,
+      Key: key,
+      Body: buffer,
+      ContentType: 'application/pdf'
+    }))
+  } catch (e) {
+    console.error('MinIO putObject error:', e)
+    throw new Error('Falla al subir PDF a MinIO')
+  }
 
   // Inserta metadata del doc
   const [ins] = await db.query(
@@ -182,7 +219,7 @@ async function ingestPdfBufferToMinio(buffer, origName, meta = {}) {
 
   // Extrae y trocea contenido
   const pages = await extractTextByPageFromBuffer(buffer)
-  const secs = splitIntoSectionsFromPages(pages)
+  const secs  = splitIntoSectionsFromPages(pages)
   let order = 0
   for (const s of secs) {
     await db.query(
@@ -199,6 +236,7 @@ async function ingestPdfBufferToMinio(buffer, origName, meta = {}) {
     source_minio_key: key
   }
 }
+
 
 // ===== multer (PDFs) =====
 const upload = multer({
@@ -258,13 +296,21 @@ app.get('/docs/:id/file', async (req, res) => {
     if (!doc) return res.status(404).json({ error: 'No encontrado' })
 
     if (doc.source_minio_key) {
-      const url = await getSignedUrl(
-        s3,
-        new GetObjectCommand({ Bucket: process.env.MINIO_BUCKET, Key: doc.source_minio_key }),
-        { expiresIn: 60 * 10 } // 10 min
-      )
-      return res.json({ url })
-    }
+  const s3safe = getS3Safe()
+  if (!s3safe) return res.status(503).json({ error: 'MinIO no disponible' })
+  try {
+    const url = await getSignedUrl(
+      s3safe,
+      new GetObjectCommand({ Bucket: process.env.MINIO_BUCKET, Key: doc.source_minio_key }),
+      { expiresIn: 600 }
+    )
+    return res.json({ url })
+  } catch (e) {
+    console.error('MinIO presign error:', e.message || e)
+    return res.status(502).json({ error: 'Falla al firmar URL de MinIO' })
+  }
+}
+
 
     if (doc.source_file) {
       const absPath = path.join(__dirname, doc.source_file)
@@ -341,15 +387,21 @@ app.delete('/docs/:id', async (req, res) => {
     if (!doc) return res.status(404).json({ error: 'No encontrado' })
 
     if (doc.source_minio_key) {
-      try {
-        await s3.send(new DeleteObjectCommand({
-          Bucket: process.env.MINIO_BUCKET,
-          Key: doc.source_minio_key
-        }))
-      } catch (e) {
-        console.warn('MinIO delete warn:', e.message)
-      }
+  const s3safe = getS3Safe()
+  if (s3safe) {
+    try {
+      await s3safe.send(new DeleteObjectCommand({
+        Bucket: process.env.MINIO_BUCKET,
+        Key: doc.source_minio_key
+      }))
+    } catch (e) {
+      console.warn('MinIO delete warn:', e.message || e)
     }
+  } else {
+    console.warn('MinIO no disponible para borrar objeto:', doc.source_minio_key)
+  }
+}
+
 
     if (doc.source_file) {
       const abs = path.join(__dirname, doc.source_file)
